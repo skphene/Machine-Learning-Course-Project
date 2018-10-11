@@ -1,0 +1,165 @@
+---
+title: "Machine Learning Course Project"
+author: "Sharvaj Phene"
+date: "10/11/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#set working directory
+wd <- "~/Desktop/DataScienceSpecialization/Course8/CourseProject/"
+setwd(wd)
+```
+
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har 
+
+#Data
+The training data for this project are available here: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv]
+The test data are available here: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv]
+The data for this project come from this source: [http://groupware.les.inf.puc-rio.br/har]. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+##Approach
+Our outcome variable is "classe", a factor variable. For this data set, participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in 5 different fashions: 
+
+Class A - exactly according to the specification 
+Class B - throwing the elbows to the front
+Class C - lifting the dumbbell only halfway
+Class D - lowering the dumbbell only halfway 
+Class E - throwing the hips to the front
+
+Two models will be tested using decision tree and random forest. The model with the highest accuracy will be chosen as our final model to predict the "classe" of the testing data set.
+
+#Cross Validation
+Cross-validation will be performed by subsampling our training data set randomly without replacement into 2 subsamples: subTraining (60% of the original Training data set) and subTesting (remaining 40% of the original Training data set). Our models will be fitted on the subTraining data set, and tested (cross validated) on the subTesting data set. Once the most accurate model is choosen, it will be finally tested on the original testing data set.
+
+#Expected Out-of-Sample Error
+The expected out of sample error rate will be 1-(cross validation accuracy).
+
+##Preparation
+```{r}
+#load libraries
+library(data.table)
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+
+#set seed for reproducibility
+set.seed(12345)
+```
+
+##Loading and Partitioning Data for Cross Validation
+```{r}
+#loading data
+training <- read.table(
+  paste0(wd, "pml-training.csv"), 
+  header = TRUE, sep = ",", na.strings = c("NA","#DIV/0!",""))
+testing <- read.table(
+  paste0(wd, "pml-testing.csv"), 
+  header = TRUE, sep = ",", na.strings = c("NA","#DIV/0!",""))
+
+#partition training into subTraining(60%) & subTesting(40%) for cross-validation
+inTrain <- createDataPartition(y = training$classe, p = 0.6, list = FALSE)
+subTraining <- training[inTrain,]
+subTesting <- training[-inTrain,]
+dim(subTraining)
+dim(subTesting)
+```
+Here we can see the dimensions of the subTraining and subTesting sets
+
+##Cleaning Data for Model Building
+
+Transformation 1: remove row id variable to prevent interference with ML algorithms
+```{r}
+subTraining <- subTraining[,-1]
+dim(subTraining)
+```
+Transformation 2: removing variables with near zero variance 
+```{r}
+NZV <- nearZeroVar(subTraining, saveMetrics = TRUE)
+c <- rownames(NZV[NZV$nzv==FALSE,])
+subTraining <- subTraining[,c]
+dim(subTraining)
+```
+Transformation 3: remove variables with NAs for over 95% of observations
+```{r}
+d <- c()
+for(i in 1:length(subTraining)) { #iterate for each variable in the training dataset
+  if(sum(is.na(subTraining[,i])) / nrow(subTraining) <= .95) { #final list of variables
+    d <- c(d, i) 
+  } 
+}
+subTraining <- subTraining[,d] #retain variables in final list 
+dim(subTraining)
+```
+Now we must apply the same transformations to our subTesting and testing data sets
+```{r}
+e <- colnames(subTesting) %in% colnames(subTraining)
+subTesting <- subTesting[,e == TRUE]
+subTesting1 <- subTesting[,-58] #with classe variable removed
+e <- colnames(testing) %in% colnames(subTraining)
+testing <- testing[,e == TRUE]
+#make sure variable classes are all consistent in the testing data set (merge, then split)
+subTesting1$t <- 1
+testing$t <- 2
+ta <- rbind(testing, subTesting1)
+testing <- subset(ta, ta$t == 2)[,-58]
+subTesting1 <- subTesting1[,-58]
+```
+
+##Model Building
+
+#ML Algorithm: Decision Tree 
+Apply algorithm to subTraining to create predictive model
+```{r}
+modFit1 <- rpart(classe ~., data = subTraining, method = "class")
+```
+View created decision tree
+```{r}
+fancyRpartPlot(modFit1)
+```
+
+Cross validate using subTesting data set
+```{r}
+#use model to predict for subTesting data set
+predictions1 <- predict(modFit1, subTesting1, type = "class")
+#use confusion matrix to check accuracy of predictions
+confusionMatrix(predictions1, subTesting$classe)
+```
+This model's accuracy is 87.89%, with it's 95% confidence iterval being (0.8715, 0.8861).
+
+#ML Algorithm: Random Forest
+Apply algorithm to subTraining to create predictive model
+```{r}
+modFit2 <- randomForest(classe ~., data = subTraining, method = "class")
+```
+Cross validate using subTesting data set
+```{r}
+#use model to predict for subTesting data set
+predictions2 <- predict(modFit2, subTesting1, type = "class")
+#use confusion matrix to check accuracy of predictions
+confusionMatrix(predictions2, subTesting$classe)
+```
+This model's accuracy is 99.86%, with it's 95% confidence iterval being (0.9975, 0.9993).
+
+#Conclusion
+This shows that our Random Forest model is more accurate than our Decision Tree model, so we shall proceed with the former.
+
+##Final Prediction
+Predict classe for testing data set using the RF model (modFit2) 
+```{r}
+finalpred <- predict(modFit2, testing, type = "class")
+print(finalpred)
+```
+
+
+
+
+
+
+
+
